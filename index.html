@@ -1730,18 +1730,23 @@ function limpiarNombreVivienda(nombre) {
 
 // ==================== FLUJO ====================
 async function init() {
+  // 1) Leer SIEMPRE el UID de la URL antes que nada.
+  //    Así, si estamos bloqueados y venimos de un escaneo NFC,
+  //    conservamos el UID para volver a la pantalla de verificación
+  //    cuando expire el bloqueo.
+  const uid = getUidFromUrl();
+  if (uid) state.uid = uid;
+
+  // 2) Ahora sí, comprobar bloqueo.
   if (isBlocked()) { showBlockedScreen(); return; }
 
-  const uid = getUidFromUrl();
-
-  // Sin UID en URL: mostramos el formulario directamente, SIN splash.
+  // 3) Sin UID en URL: mostramos el formulario directamente, SIN splash.
   if (!uid) {
     showScreen('screen-uid');
     return;
   }
 
-  // Con UID en URL: pasamos por el splash mientras cargamos la tarjeta.
-  state.uid = uid;
+  // 4) Con UID en URL: pasamos por el splash mientras cargamos la tarjeta.
   try {
     await withSplash(() => cargarDatosTarjeta());
     prepararVerificacion();
