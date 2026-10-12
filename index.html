@@ -620,7 +620,17 @@ button:disabled {
   border-radius: var(--radius);
 }
 
-.filters-bar .field { margin-bottom: 0; }
+.filters-bar .field {
+  margin-bottom: 0;
+  min-width: 0;          /* permite que el grid item encoja por debajo del contenido */
+  overflow: hidden;      /* evita que un hijo ancho empuje el contenedor */
+}
+
+.filters-bar input,
+.filters-bar select {
+  min-width: 0;          /* el propio input también debe poder encoger */
+  max-width: 100%;       /* nunca más ancho que su celda */
+}
 
 .filters-bar .field label {
   font-size: 10.5px;
