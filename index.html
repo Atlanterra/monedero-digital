@@ -1495,10 +1495,8 @@ const SUPABASE_KEY = 'sb_publishable_NioMO9hp_ZZMlVN0tsz2qw_HNaUOmeD';
 const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
 const CELLS = ['A1','A2','A3','A4','A5','B1','B2','B3','B4','B5','C1','C2','C3','C4','C5','D1','D2','D3','D4','D5','E1','E2','E3','E4','E5','F1','F2','F3','F4','F5'];
-const MAX_ATTEMPTS = 3;
-const BLOCK_DURATION_MS = 30 * 1000;
-const LS_KEY_BLOCK = 'cartilla_publica_block_until';
 const POR_PAGINA = 10;
+// El bloqueo ya no vive en el cliente: lo decide el servidor.
 
 // ==================== ESTADO ====================
 const state = {
@@ -1509,7 +1507,6 @@ const state = {
   filtros: { tipo: '', desde: '', hasta: '' },
   tarjeta: null,
   cartilla: null,
-  attempts: 0,
   coordValue: null,
   blockIntervalId: null,
   numeroVisible: false   
@@ -1567,18 +1564,52 @@ function pickRandomCell() {
   return CELLS[Math.floor(Math.random() * CELLS.length)];
 }
 
-function isBlocked() {
-  const until = parseInt(localStorage.getItem(LS_KEY_BLOCK) || '0', 10);
-  return Date.now() < until;
-}
+// El bloqueo ahora lo decide el servidor. Esta función solo dibuja el
+// countdown con los segundos que el servidor nos envíe.
+function showBlockedScreenFromServer(bloqueo) {
+  showScreen('screen-blocked');
 
-function secondsRemainingBlock() {
-  const until = parseInt(localStorage.getItem(LS_KEY_BLOCK) || '0', 10);
-  return Math.max(0, Math.ceil((until - Date.now()) / 1000));
-}
+  const countdownEl  = $('block-countdown');
+  const subtitleEl   = document.querySelector('#screen-blocked .subtitle');
+  const hintEl       = document.querySelector('#screen-blocked > p:last-of-type');
 
-function setBlock() { localStorage.setItem(LS_KEY_BLOCK, (Date.now() + BLOCK_DURATION_MS).toString()); }
-function clearBlock() { localStorage.removeItem(LS_KEY_BLOCK); }
+  if (state.blockIntervalId) {
+    clearInterval(state.blockIntervalId);
+    state.blockIntervalId = null;
+  }
+
+  // Bloqueo permanente
+  if (!bloqueo || bloqueo.permanente === true) {
+    if (countdownEl) countdownEl.textContent = '∞';
+    if (subtitleEl)  subtitleEl.textContent  =
+      'Bloqueo permanente. Contacta con Soporte Técnico para desbloquear.';
+    if (hintEl) hintEl.style.display = 'none';
+    return;
+  }
+
+  let restantes = parseInt(bloqueo.segundos_restantes, 10) || 0;
+  if (restantes <= 0) {
+    if (state.uid) prepararVerificacion();
+    else showScreen('screen-uid');
+    return;
+  }
+
+  if (countdownEl) countdownEl.textContent = restantes;
+  if (subtitleEl)  subtitleEl.textContent  = 'segundos para volver a intentarlo';
+  if (hintEl) hintEl.style.display = '';
+
+  state.blockIntervalId = setInterval(() => {
+    restantes--;
+    if (restantes <= 0) {
+      clearInterval(state.blockIntervalId);
+      state.blockIntervalId = null;
+      if (state.uid) prepararVerificacion();
+      else showScreen('screen-uid');
+    } else {
+      if (countdownEl) countdownEl.textContent = restantes;
+    }
+  }, 1000);
+}
 
 function formatNumeroPublico(np) {
   const limpio = String(np || '').replace(/\s+/g, '');
@@ -1710,7 +1741,9 @@ function traducirError(codigo) {
     SIN_TARJETA_FIRMAS: 'Esta vivienda no tiene Tarjeta de Firmas activa.',
     COORDENADA_CORRUPTA: 'Hay un problema con la Tarjeta de Firmas.',
     CELDA_NO_EXISTE: 'La celda solicitada no existe.',
-    COORDENADA_INCORRECTA: 'La coordenada introducida no es correcta.'
+    COORDENADA_INCORRECTA: 'La coordenada introducida no es correcta.',
+    BLOQUEADO: 'Demasiados intentos. Espera antes de volver a intentarlo.',
+    BLOQUEADO_PERMANENTE: 'Acceso bloqueado permanentemente. Contacta con el administrador.'
   };
   return map[codigo] || 'Ha ocurrido un error. Inténtalo de nuevo.';
 }
@@ -1730,34 +1763,38 @@ function limpiarNombreVivienda(nombre) {
 
 // ==================== FLUJO ====================
 async function init() {
-  // 1) Leer SIEMPRE el UID de la URL antes que nada.
-  //    Así, si estamos bloqueados y venimos de un escaneo NFC,
-  //    conservamos el UID para volver a la pantalla de verificación
-  //    cuando expire el bloqueo.
+  // 1) Leer UID de la URL. Se conserva para cuando expire el bloqueo.
   const uid = getUidFromUrl();
   if (uid) state.uid = uid;
 
-  // 2) Ahora sí, comprobar bloqueo.
-  if (isBlocked()) { showBlockedScreen(); return; }
-
-  // 3) Sin UID en URL: mostramos el formulario directamente, SIN splash.
+  // 2) Sin UID en URL: formulario directo, SIN splash.
   if (!uid) {
     showScreen('screen-uid');
     return;
   }
 
-  // 4) Con UID en URL: pasamos por el splash mientras cargamos la tarjeta.
+  // 3) Con UID: splash mientras consultamos al servidor.
+  //    El servidor decide si hay bloqueo.
   try {
     await withSplash(() => cargarDatosTarjeta());
     prepararVerificacion();
   } catch (err) {
-    console.error(err);
-    state.uid = null;
-    showScreen('screen-uid');
-    const codigo = err && err.message ? err.message : 'ERROR_DESCONOCIDO';
-    const mensaje = traducirError(codigo) || 'Error de conexión. Inténtalo de nuevo.';
-    setTimeout(() => mostrarError('uid-error', mensaje), 100);
+    handleUidError(err);
   }
+}
+
+// Helper común para ambos flujos (init y botón manual)
+function handleUidError(err) {
+  console.error(err);
+  const codigo = err && err.message ? err.message : 'ERROR_DESCONOCIDO';
+  if (codigo === 'BLOQUEADO_FROM_SERVER') {
+    // Ya estamos en la pantalla de bloqueo. No hacer nada más.
+    return;
+  }
+  state.uid = null;
+  showScreen('screen-uid');
+  const mensaje = traducirError(codigo) || 'Error de conexión. Inténtalo de nuevo.';
+  setTimeout(() => mostrarError('uid-error', mensaje), 100);
 }
 
 async function cargarDatosTarjeta() {
@@ -1768,6 +1805,13 @@ async function cargarDatosTarjeta() {
 
   if (!data || !data.ok) {
     const codigo = (data && data.error) || 'ERROR_DESCONOCIDO';
+
+    // Bloqueo en servidor → mostrar pantalla de bloqueo y abortar el resto
+    if (codigo === 'BLOQUEADO' || codigo === 'BLOQUEADO_PERMANENTE') {
+      showBlockedScreenFromServer(data.bloqueo);
+      throw new Error('BLOQUEADO_FROM_SERVER');
+    }
+
     throw new Error(codigo);
   }
 
@@ -1778,7 +1822,6 @@ async function cargarDatosTarjeta() {
 function prepararVerificacion() {
   state.cell = pickRandomCell();
   $('cell-name').textContent = state.cell;
-  state.attempts = 0;
   ocultarError('coord-error');
   $('input-coord').value = '';
   showScreen('screen-verify');
@@ -1786,8 +1829,6 @@ function prepararVerificacion() {
 }
 
 async function verificarCoordenada() {
-  if (isBlocked()) { showBlockedScreen(); return; }
-
   const valorStr = $('input-coord').value.trim();
   if (!valorStr) { mostrarError('coord-error', 'Introduce la coordenada.'); return; }
 
@@ -1814,15 +1855,35 @@ async function verificarCoordenada() {
 
     if (!data || !data.ok) {
       const codigo = (data && data.error) || 'ERROR_DESCONOCIDO';
-      state.attempts++;
 
-      if (codigo === 'COORDENADA_INCORRECTA') {
-        if (state.attempts >= MAX_ATTEMPTS) { setBlock(); showBlockedScreen(); return; }
-        const restantes = MAX_ATTEMPTS - state.attempts;
-        mostrarError('coord-error', `${traducirError(codigo)} Intentos restantes: ${restantes}.`);
-      } else {
-        mostrarError('coord-error', traducirError(codigo));
+      // Bloqueo dictado por el servidor
+      if (codigo === 'BLOQUEADO' || codigo === 'BLOQUEADO_PERMANENTE') {
+        showBlockedScreenFromServer(data.bloqueo);
+        return;
       }
+
+      // Coordenada incorrecta: el servidor nos dice cuántos intentos quedan
+      if (codigo === 'COORDENADA_INCORRECTA') {
+        const falloInfo = data.fallo_info || {};
+
+        if (falloInfo.bloqueado === true) {
+          showBlockedScreenFromServer(falloInfo);
+          return;
+        }
+
+        const restantes = falloInfo.intentos_restantes;
+        if (typeof restantes === 'number') {
+          mostrarError(
+            'coord-error',
+            `${traducirError(codigo)} Intentos restantes en esta fase: ${restantes}.`
+          );
+        } else {
+          mostrarError('coord-error', traducirError(codigo));
+        }
+        return;
+      }
+
+      mostrarError('coord-error', traducirError(codigo));
       return;
     }
 
@@ -1831,17 +1892,16 @@ async function verificarCoordenada() {
       state.tarjeta.vivienda_nombre = limpiarNombreVivienda(state.tarjeta.vivienda_nombre);
     }
     state.cartilla = data.cartilla;
-    state.attempts = 0;
     state.coordValue = valor;
     state.page = 1;
     state.filtros = { tipo: '', desde: '', hasta: '' };
     $('f-tipo').value = '';
     $('f-desde').value = '';
     $('f-hasta').value = '';
-    clearBlock();
+    // El servidor ha perdonado los fallos pendientes de la fase actual,
+    // pero mantiene la fase acumulada (modelo escalado). No se borra la ficha.
     pintarCartilla();
     showScreen('screen-cartilla');
-
   } catch (err) {
     console.error(err);
     mostrarError('coord-error', 'Error de conexión. Inténtalo de nuevo.');
@@ -1956,7 +2016,31 @@ async function cargarPagina(nuevaPagina) {
     });
 
     if (error) throw error;
-    if (!data || !data.ok) throw new Error((data && data.error) || 'Error');
+
+    if (!data || !data.ok) {
+      const codigo = (data && data.error) || 'Error';
+
+      // El servidor ha bloqueado al usuario a mitad de navegación
+      if (codigo === 'BLOQUEADO' || codigo === 'BLOQUEADO_PERMANENTE') {
+        showBlockedScreenFromServer(data.bloqueo);
+        return;
+      }
+
+      // La Tarjeta de Firmas ha cambiado mientras el usuario estaba dentro
+      if (codigo === 'COORDENADA_INCORRECTA') {
+        const falloInfo = data.fallo_info || {};
+        if (falloInfo.bloqueado === true) {
+          showBlockedScreenFromServer(falloInfo);
+          return;
+        }
+        mostrarError('coord-error', 'La Tarjeta de Firmas ha cambiado. Vuelve a verificar.');
+        state.coordValue = null;
+        prepararVerificacion();
+        return;
+      }
+
+      throw new Error(codigo);
+    }
 
     state.cartilla = data.cartilla;
     pintarMovimientos(data.cartilla.filas || []);
@@ -2402,27 +2486,10 @@ function renderBloqueTraspaso(candidatos, tarjetasMap = {}, viviendasMap = {}) {
 }
 
 // ==================== BLOQUEO ====================
+// showBlockedScreen() ya no se usa: la sustituye showBlockedScreenFromServer().
+// Si quieres conservar compatibilidad con llamadas antiguas, puedes dejarla vacía:
 function showBlockedScreen() {
-  showScreen('screen-blocked');
-  let restantes = secondsRemainingBlock();
-  $('block-countdown').textContent = restantes;
-
-  if (state.blockIntervalId) clearInterval(state.blockIntervalId);
-  state.blockIntervalId = setInterval(() => {
-    restantes = secondsRemainingBlock();
-    if (restantes <= 0) {
-      clearInterval(state.blockIntervalId);
-      state.blockIntervalId = null;
-      state.attempts = 0;
-      if (state.uid) {
-        prepararVerificacion();
-      } else {
-        showScreen('screen-uid');
-      }
-    } else {
-      $('block-countdown').textContent = restantes;
-    }
-  }, 500);
+  // No-op: el bloqueo viene del servidor vía showBlockedScreenFromServer().
 }
 
 // ==================== DESCARGA DE PDF ====================
@@ -2447,7 +2514,29 @@ async function descargarPDF() {
     });
 
     if (error) throw error;
-    if (!data || !data.ok) throw new Error((data && data.error) || 'Error');
+
+    if (!data || !data.ok) {
+      const codigo = (data && data.error) || 'Error';
+
+      if (codigo === 'BLOQUEADO' || codigo === 'BLOQUEADO_PERMANENTE') {
+        showBlockedScreenFromServer(data.bloqueo);
+        return;
+      }
+
+      if (codigo === 'COORDENADA_INCORRECTA') {
+        const falloInfo = data.fallo_info || {};
+        if (falloInfo.bloqueado === true) {
+          showBlockedScreenFromServer(falloInfo);
+          return;
+        }
+        mostrarError('coord-error', 'La Tarjeta de Firmas ha cambiado. Vuelve a verificar.');
+        state.coordValue = null;
+        prepararVerificacion();
+        return;
+      }
+
+      throw new Error(codigo);
+    }
 
     const filas = data.cartilla.filas || [];
     if (!filas.length) {
@@ -2624,12 +2713,7 @@ document.addEventListener('DOMContentLoaded', () => {
       await withSplash(() => cargarDatosTarjeta());
       prepararVerificacion();
     } catch (err) {
-      console.error(err);
-      state.uid = null;
-      showScreen('screen-uid');
-      const codigo = err && err.message ? err.message : 'ERROR_DESCONOCIDO';
-      const mensaje = traducirError(codigo) || 'Error de conexión. Inténtalo de nuevo.';
-      setTimeout(() => mostrarError('uid-error', mensaje), 100);
+      handleUidError(err);
     } finally {
       btn.disabled = false;
       btn.innerHTML = txt;
