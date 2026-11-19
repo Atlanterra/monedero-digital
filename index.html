@@ -1098,6 +1098,10 @@ table.extracto tbody td.col-saldo { color: var(--text); }
   margin-top: 12px;
 }
 
+/* Precio con céntimos en superíndice */
+.precio-sup { white-space: nowrap; }
+.precio-sup sup { font-size:.55em; vertical-align:super; line-height:0; font-weight:600; margin-left:1px; }
+
 /* ==================== RESPONSIVE ==================== */
 @media (max-width: 640px) {
   body { padding: 12px 8px; }
@@ -1673,20 +1677,32 @@ function formatFechaHoy() {
   return `${d.getDate()} de ${meses[d.getMonth()]} de ${d.getFullYear()}`;
 }
 
-function formatCantidad(n) {
-  const num = Number(n) || 0;
-  const abs = Math.abs(num);
-  const str = Number.isInteger(abs)
-    ? abs.toString()
-    : abs.toFixed(2).replace('.', ',');
-  return (num >= 0 ? '+' : '-') + str;
+// Función base para superíndice (usada en otras apps)
+function fmtSup(num) {
+  const n = Math.round((Number(num) || 0) * 100) / 100;
+  const [ent, dec] = Math.abs(n).toFixed(2).split('.');
+  return `<span class="precio-sup">${n < 0 ? '-' : ''}${ent}<sup>${dec}</sup></span>`;
 }
 
-function formatSaldo(n) {
+// Para importes en tabla (siempre con + o - y superíndice)
+function formatImporteUI(n) {
   const num = Number(n) || 0;
-  return Number.isInteger(num)
-    ? num.toString()
-    : num.toFixed(2).replace('.', ',');
+  if (num >= 0) {
+    const [ent, dec] = num.toFixed(2).split('.');
+    return `+<span class="precio-sup">${ent}<sup>${dec}</sup></span>`;
+  } else {
+    return fmtSup(num); // fmtSup ya añade el signo '-' automáticamente
+  }
+}
+
+// Para saldos en UI (con superíndice)
+function formatSaldoUI(n) {
+  return fmtSup(n);
+}
+
+// Para PDF (sin HTML, siempre con 2 decimales y punto)
+function formatParaPDF(n) {
+  return (Number(n) || 0).toFixed(2);
 }
 
 function labelTipo(tipo) {
@@ -1919,7 +1935,7 @@ function pintarCartilla() {
   state.numeroVisible = false;   // Al abrir una cartilla nueva, siempre empieza ofuscado
   actualizarNumeroMostrado();
   $('info-vivienda').textContent = state.tarjeta.vivienda_nombre || '—';
-  $('info-saldo').textContent = formatSaldo(state.tarjeta.saldo);
+  $('info-saldo').innerHTML = formatSaldoUI(state.tarjeta.saldo);
 
   pintarMovimientos(state.cartilla.filas || []);
   pintarPaginacion(state.cartilla);
@@ -1957,8 +1973,8 @@ function pintarMovimientos(filas) {
         ${escaparHtml(f.concepto || labelTipo(tipo))}
         <div class="mov-tipo-tag">${labelTipo(tipo)} · ${escaparHtml(f.usuario || 'Sistema')}</div>
       </td>
-      <td class="col-importe ${claseImporte}">${formatCantidad(cant)}</td>
-      <td class="col-saldo">${formatSaldo(saldo)}</td>
+<td class="col-importe ${claseImporte}">${formatImporteUI(cant)}</td>
+<td class="col-saldo">${formatSaldoUI(saldo)}</td>
     `;
     tr.addEventListener('click', () => abrirDetalle(f));
     tbody.appendChild(tr);
@@ -2098,15 +2114,15 @@ function abrirDetalle(f) {
     </div>
     <div class="detail-row">
       <div class="detail-label">Cantidad</div>
-      <div class="detail-value num ${claseCant}">${formatCantidad(cant)} Créditos</div>
+      <div class="detail-value num ${claseCant}">${formatImporteUI(cant)} Créditos</div>
     </div>
     <div class="detail-row">
       <div class="detail-label">Saldo antes</div>
-      <div class="detail-value num">${formatSaldo(antes)} Créditos</div>
+      <div class="detail-value num">${formatSaldoUI(antes)} Créditos</div>
     </div>
     <div class="detail-row">
       <div class="detail-label">Saldo después</div>
-      <div class="detail-value num">${formatSaldo(despues)} Créditos</div>
+      <div class="detail-value num">${formatSaldoUI(despues)} Créditos</div>
     </div>
     <div class="detail-row">
       <div class="detail-label">Realizado por</div>
@@ -2592,7 +2608,7 @@ async function descargarPDF() {
 
     doc.setFontSize(16);
     doc.setTextColor(26, 90, 142);
-    doc.text(formatSaldo(state.tarjeta.saldo) + ' Créditos', pageWidth - 20, 76, { align: 'right' });
+    doc.text(formatParaPDF(state.tarjeta.saldo) + ' Créditos', pageWidth - 20, 76, { align: 'right' });
 
     // ====== LÍNEA DE FILTROS APLICADOS ======
     const partesFiltro = [];
@@ -2616,16 +2632,16 @@ async function descargarPDF() {
     doc.setTextColor(128, 154, 176);
     doc.text(textoFiltros, 14, 88);
 
-    const rows = filas.map(f => {
-      const cant = Number(f.cantidad) || 0;
-      const saldo = Number(f.saldo_nuevo) || 0;
-      return [
-        formatFechaCorta(f.created_at),
-        (f.concepto || labelTipo((f.tipo || '').toLowerCase())) + ' (' + labelTipo((f.tipo || '').toLowerCase()) + ')',
-        formatCantidad(cant),
-        formatSaldo(saldo)
-      ];
-    });
+const rows = filas.map(f => {
+  const cant = Number(f.cantidad) || 0;
+  const saldo = Number(f.saldo_nuevo) || 0;
+  return [
+    formatFechaCorta(f.created_at),
+    (f.concepto || labelTipo((f.tipo || '').toLowerCase())) + ' (' + labelTipo((f.tipo || '').toLowerCase()) + ')',
+    formatParaPDF(cant),
+    formatParaPDF(saldo)
+  ];
+});
 
     doc.autoTable({
       startY: 94,
@@ -2765,5 +2781,883 @@ document.addEventListener('DOMContentLoaded', () => {
   init();
 });
 </script>
+<!-- ===== AD COMMUNITY · INICIO ===== -->
+<script>
+(function () {
+  'use strict';
+
+  var APP_ID = 'cartilla';
+  var CHANNEL = 'rodillo';
+  var SUPABASE_URL = 'https://ejsngidrjdbozdujbcya.supabase.co';
+  var SUPABASE_ANON_KEY = 'sb_publishable_NioMO9hp_ZZMlVN0tsz2qw_HNaUOmeD';
+  var FP_KEY = 'ad_community_fingerprint_cartilla';
+  var DEBUG = false;
+  function log(){ if (DEBUG) try { console.log.apply(console, ['[AD Community CARTILLA]'].concat([].slice.call(arguments))); } catch(e){} }
+
+  function esStaff() {
+    try {
+      if (localStorage.getItem('ad_force_show_staff') === '1') return false;
+      if (localStorage.getItem('ad_staff_mode_cartilla') === '1') return true;
+    } catch (e) {}
+    return false;
+  }
+
+  function generarUUID() {
+    try {
+      if (window.crypto && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+    } catch (e) {}
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+      var r = Math.random() * 16 | 0, v = (c === 'x') ? r : (r & 0x3 | 0x8);
+      return v.toString(16);
+    });
+  }
+  function getFingerprint() {
+    try {
+      var fp = localStorage.getItem(FP_KEY);
+      if (!fp) { fp = generarUUID(); localStorage.setItem(FP_KEY, fp); }
+      return fp;
+    } catch (e1) {
+      try {
+        var fp2 = sessionStorage.getItem(FP_KEY);
+        if (!fp2) { fp2 = generarUUID(); sessionStorage.setItem(FP_KEY, fp2); }
+        return fp2;
+      } catch (e2) {
+        if (!window.__AD_FP_MEM_CARTILLA) window.__AD_FP_MEM_CARTILLA = generarUUID();
+        return window.__AD_FP_MEM_CARTILLA;
+      }
+    }
+  }
+
+  function rpc(fnName, params) {
+    return fetch(SUPABASE_URL + '/rest/v1/rpc/' + fnName, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': SUPABASE_ANON_KEY,
+        'Authorization': 'Bearer ' + SUPABASE_ANON_KEY
+      },
+      body: JSON.stringify(params || {})
+    }).then(function (res) {
+      if (!res.ok) {
+        return res.text().then(function (t) {
+          throw new Error('RPC ' + fnName + ' HTTP ' + res.status + ' — ' + t);
+        });
+      }
+      return res.json();
+    });
+  }
+
+  function crearContenedorBanner() {
+    var existente = document.getElementById('ad-rodillo-container');
+    if (existente) return existente;
+    var cont = document.createElement('div');
+    cont.id = 'ad-rodillo-container';
+    cont.style.cssText =
+      'position:fixed;top:0;left:0;right:0;width:100%;z-index:1100;' +
+      'margin:0;padding:8px 20px;box-sizing:border-box;' +
+      'background:#f5f7fb;';
+    var inner = document.createElement('div');
+    inner.id = 'ad-rodillo-inner';
+    inner.style.cssText =
+      'display:block;position:relative;width:100%;' +
+      'background:#F5EDE0;border-radius:8px;overflow:hidden;' +
+      'box-shadow:0 2px 8px rgba(0,0,0,0.08);transition:opacity .3s ease;';
+    var link = document.createElement('a');
+    link.id = 'ad-rodillo-link';
+    link.style.cssText = 'display:block;width:100%;height:100%;text-decoration:none;';
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    var img = document.createElement('img');
+    img.id = 'ad-rodillo-img';
+    img.style.cssText = 'width:100%;height:auto;display:block;';
+    img.alt = 'Publicidad';
+    img.onload = function () { requestAnimationFrame(actualizarOffsetHeader); };
+    var label = document.createElement('div');
+    label.textContent = 'PUBLICIDAD';
+    label.style.cssText =
+      'position:absolute;top:6px;left:6px;font-size:9px;letter-spacing:1px;' +
+      'color:#fff;background:rgba(0,0,0,.5);padding:2px 6px;border-radius:3px;' +
+      'font-family:sans-serif;font-weight:700;z-index:2;pointer-events:none;';
+    link.appendChild(img);
+    inner.appendChild(link);
+    inner.appendChild(label);
+    cont.appendChild(inner);
+    document.body.insertBefore(cont, document.body.firstChild);
+    return cont;
+  }
+  function actualizarOffsetHeader() {
+    var cont = document.getElementById('ad-rodillo-container');
+    if (!cont) return;
+    document.documentElement.style.setProperty('--ad-banner-height', cont.offsetHeight + 'px');
+  }
+  function mostrarBanner(ad) {
+    var inner = document.getElementById('ad-rodillo-inner');
+    var link = document.getElementById('ad-rodillo-link');
+    var img = document.getElementById('ad-rodillo-img');
+    if (!inner || !link || !img) return;
+    img.src = ad.file_url;
+    if (ad.target_url) {
+      link.href = ad.target_url;
+      link.style.cursor = 'pointer';
+      try {
+        link.dataset.adId = ad.ad_id || ad.id || '';
+        link.dataset.channel = ad.channel || CHANNEL;
+        link.dataset.appId = APP_ID;
+      } catch (e) {}
+      link.onclick = function () {
+        var adId = link.dataset.adId, chn = link.dataset.channel, appId = link.dataset.appId;
+        var fp = getFingerprint();
+        if (adId && chn && appId && fp) {
+          try {
+            fetch(SUPABASE_URL + '/rest/v1/rpc/ad_register_click', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'apikey': SUPABASE_ANON_KEY,
+                'Authorization': 'Bearer ' + SUPABASE_ANON_KEY
+              },
+              body: JSON.stringify({
+                p_ad_id: adId, p_app_id: appId, p_channel: chn, p_fingerprint: fp
+              }),
+              keepalive: true
+            }).catch(function () {});
+          } catch (e) {}
+        }
+      };
+    } else {
+      link.removeAttribute('href');
+      link.style.cursor = 'default';
+      link.onclick = function (ev) { ev.preventDefault(); };
+    }
+    inner.style.display = 'block';
+    inner.style.opacity = '1';
+    inner.style.pointerEvents = 'auto';
+  }
+  function ocultarBanner() {
+    var inner = document.getElementById('ad-rodillo-inner');
+    if (!inner) return;
+    inner.style.opacity = '0.15';
+    inner.style.pointerEvents = 'none';
+  }
+  function ocultarContenedorCompleto() {
+    var cont = document.getElementById('ad-rodillo-container');
+    if (!cont) return;
+    cont.style.display = 'none';
+    document.body.classList.remove('ad-banner-visible');
+  }
+  function mostrarContenedorCompleto() {
+    var cont = document.getElementById('ad-rodillo-container');
+    if (!cont) return;
+    cont.style.display = 'block';
+    document.body.classList.add('ad-banner-visible');
+    requestAnimationFrame(actualizarOffsetHeader);
+  }
+
+  var enCiclo = false;
+  var siguienteTimeout = null;
+
+  function programarSiguiente(ms) {
+    if (siguienteTimeout) clearTimeout(siguienteTimeout);
+    siguienteTimeout = setTimeout(cicloRodillo, ms);
+  }
+  function pararTodo() {
+    if (siguienteTimeout) { clearTimeout(siguienteTimeout); siguienteTimeout = null; }
+    ocultarContenedorCompleto();
+    enCiclo = false;
+  }
+
+  function cicloRodillo() {
+    if (enCiclo) return;
+    if (document.visibilityState !== 'visible') return;
+
+    if (esStaff()) {
+      ocultarContenedorCompleto();
+      return;
+    }
+
+    enCiclo = true;
+    var fp = getFingerprint();
+    rpc('ad_get_next_ad', { p_app_id: APP_ID, p_channel: CHANNEL, p_fingerprint: fp })
+      .then(function (data) {
+        if (!data || !data.ok) {
+          log('sin anuncios:', data && data.reason);
+          ocultarContenedorCompleto();
+          enCiclo = false;
+          programarSiguiente(30000);
+          return;
+        }
+        mostrarContenedorCompleto();
+        var durationMs = (data.duration_seconds || 5) * 1000;
+        mostrarBanner(data);
+        var accumulated = 0, lastCheck = Date.now(), confirmado = false;
+        var checkId = setInterval(function () {
+          if (esStaff()) {
+            clearInterval(checkId);
+            pararTodo();
+            return;
+          }
+          var now = Date.now();
+          if (document.visibilityState === 'visible') accumulated += (now - lastCheck);
+          lastCheck = now;
+          if (!confirmado && accumulated >= durationMs) {
+            confirmado = true;
+            clearInterval(checkId);
+            confirmarVisualizacion(data.view_token);
+          }
+        }, 200);
+        setTimeout(function () {
+          if (!confirmado) {
+            clearInterval(checkId);
+            ocultarBanner();
+            enCiclo = false;
+            programarSiguiente(5000);
+          }
+        }, durationMs + 60000);
+      })
+      .catch(function (err) {
+        log('error get_next_ad:', err);
+        ocultarContenedorCompleto();
+        enCiclo = false;
+        programarSiguiente(30000);
+      });
+  }
+  function confirmarVisualizacion(viewToken) {
+    if (esStaff()) { pararTodo(); return; }
+    rpc('ad_confirm_view', { p_view_token: viewToken })
+      .then(function (data) {
+        if (data && data.ok) log('facturado OK:', data.credits_charged, 'créditos · mov', data.numero_movimiento);
+        else log('facturación rechazada:', data && data.reason);
+      })
+      .catch(function (err) { log('error confirm_view:', err); })
+      .then(function () {
+        ocultarBanner();
+        enCiclo = false;
+        programarSiguiente(1000);
+      });
+  }
+
+  function inyectarEstilos() {
+    if (document.getElementById('ad-community-styles')) return;
+    var style = document.createElement('style');
+    style.id = 'ad-community-styles';
+    style.textContent =
+      '#ad-rodillo-inner { height: auto; }' +
+      '#ad-rodillo-img { object-fit: contain; }' +
+      'body.ad-banner-visible { padding-top: calc(24px + var(--ad-banner-height, 76px)) !important; }' +
+      '@media(max-width:900px){' +
+      '  #ad-rodillo-container{padding:4px 8px !important;}' +
+      '  #ad-rodillo-inner{border-radius:0 !important;}' +
+      '}';
+    document.head.appendChild(style);
+  }
+
+  function init() {
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', init);
+      return;
+    }
+    inyectarEstilos();
+    crearContenedorBanner();
+    ocultarContenedorCompleto();
+    if (window.ResizeObserver) {
+      var ro = new ResizeObserver(function () { actualizarOffsetHeader(); });
+      ro.observe(document.getElementById('ad-rodillo-container'));
+    }
+    window.addEventListener('resize', actualizarOffsetHeader);
+    window.addEventListener('load', actualizarOffsetHeader);
+
+    if (!esStaff()) {
+      rpc('ad_register_fingerprint', { p_fingerprint: getFingerprint() })
+        .then(function (r) { log('fingerprint registrado:', r); })
+        .catch(function (e) { log('fingerprint error:', e); });
+      cicloRodillo();
+    } else {
+      log('staff detectado en init → ads deshabilitados');
+    }
+
+    window.ADCommunity = {
+      refresh: function () {
+        if (esStaff()) { pararTodo(); return; }
+        ocultarBanner(); enCiclo = false;
+        if (siguienteTimeout) clearTimeout(siguienteTimeout);
+        cicloRodillo();
+      },
+      hide: function () { ocultarBanner(); },
+      getFingerprint: getFingerprint,
+      isStaff: esStaff,
+      debug: function (v) { DEBUG = !!v; }
+    };
+  }
+
+  window.addEventListener('storage', function (e) {
+    if (!e.key) return;
+    if (e.key === 'ad_staff_mode_cartilla' || e.key === 'ad_force_show_staff') {
+      if (esStaff()) { pararTodo(); }
+      else if (!enCiclo && siguienteTimeout === null) { cicloRodillo(); }
+    }
+  });
+
+  setInterval(function () {
+    if (esStaff()) {
+      if (enCiclo || siguienteTimeout) pararTodo();
+    } else {
+      if (!enCiclo && siguienteTimeout === null) cicloRodillo();
+    }
+  }, 2000);
+
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState !== 'visible') return;
+    if (esStaff()) { pararTodo(); return; }
+    if (!enCiclo) {
+      if (siguienteTimeout) { clearTimeout(siguienteTimeout); siguienteTimeout = null; }
+      cicloRodillo();
+    }
+  });
+
+  init();
+})();
+
+</script>
+<!-- ===== AD COMMUNITY · FIN ===== -->
+
+<!-- ===== AD COMMUNITY · VOLUNTARIA · INICIO ===== -->
+<script>
+(function () {
+  'use strict';
+
+  var APP_ID = 'cartilla';
+  var CHANNEL = 'voluntaria';
+  var SUPABASE_URL = 'https://ejsngidrjdbozdujbcya.supabase.co';
+  var SUPABASE_ANON_KEY = 'sb_publishable_NioMO9hp_ZZMlVN0tsz2qw_HNaUOmeD';
+  var FP_KEY = 'ad_community_fingerprint_cartilla';
+  var DEBUG = false;
+  function log(){ if (DEBUG) try { console.log.apply(console, ['[AD Voluntaria CARTILLA]'].concat([].slice.call(arguments))); } catch(e){} }
+
+  /* ======== utilidades base (idénticas al bloque rodillo) ======== */
+  function esStaff() {
+    try {
+      if (localStorage.getItem('ad_force_show_staff') === '1') return false;
+      if (localStorage.getItem('ad_staff_mode_cartilla') === '1') return true;
+    } catch (e) {}
+    return false;
+  }
+  function generarUUID() {
+    try {
+      if (window.crypto && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+    } catch (e) {}
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+      var r = Math.random() * 16 | 0, v = (c === 'x') ? r : (r & 0x3 | 0x8);
+      return v.toString(16);
+    });
+  }
+  function getFingerprint() {
+    try {
+      var fp = localStorage.getItem(FP_KEY);
+      if (!fp) { fp = generarUUID(); localStorage.setItem(FP_KEY, fp); }
+      return fp;
+    } catch (e1) {
+      try {
+        var fp2 = sessionStorage.getItem(FP_KEY);
+        if (!fp2) { fp2 = generarUUID(); sessionStorage.setItem(FP_KEY, fp2); }
+        return fp2;
+      } catch (e2) {
+        if (!window.__AD_FP_MEM_CARTILLA) window.__AD_FP_MEM_CARTILLA = generarUUID();
+        return window.__AD_FP_MEM_CARTILLA;
+      }
+    }
+  }
+  function rpc(fnName, params) {
+    return fetch(SUPABASE_URL + '/rest/v1/rpc/' + fnName, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': SUPABASE_ANON_KEY,
+        'Authorization': 'Bearer ' + SUPABASE_ANON_KEY
+      },
+      body: JSON.stringify(params || {})
+    }).then(function (res) {
+      if (!res.ok) {
+        return res.text().then(function (t) {
+          throw new Error('RPC ' + fnName + ' HTTP ' + res.status + ' — ' + t);
+        });
+      }
+      return res.json();
+    });
+  }
+
+  /* ======== mensajes por motivo (límites configurados en GESTOR) ======== */
+  var MOTIVOS = {
+    canal_inactivo: 'El canal de anuncios voluntarios está desactivado temporalmente.',
+    pausa_global: 'La publicidad está en pausa temporalmente. Inténtalo más tarde.',
+    fingerprint_bloqueado: 'Los anuncios no están disponibles para este dispositivo.',
+    limite_total_alcanzado: 'Has alcanzado el máximo de anuncios voluntarios de esta hora.<br>¡Gracias por tu apoyo! Vuelve más tarde.',
+    sin_anuncios_elegibles: 'Ahora mismo no hay anuncios disponibles.<br>Inténtalo de nuevo en unos minutos.',
+    sin_tarifa_configurada: 'Ahora mismo no hay anuncios disponibles.',
+    anunciante_inactivo: 'Ahora mismo no hay anuncios disponibles.',
+    anunciante_sin_tarjeta: 'Ahora mismo no hay anuncios disponibles.',
+    tarjeta_inexistente: 'Ahora mismo no hay anuncios disponibles.',
+    tarjeta_baja: 'Ahora mismo no hay anuncios disponibles.',
+    presupuesto_diario_agotado: 'Los anuncios se han agotado por hoy.<br>¡Gracias por tu apoyo!',
+    sin_saldo_anunciante: 'Ahora mismo no hay anuncios disponibles.',
+    parametros_invalidos: 'No se ha podido solicitar el anuncio. Inténtalo de nuevo.'
+  };
+  function motivoTxt(reason) {
+    return MOTIVOS[reason] || 'Los anuncios no están disponibles ahora mismo. Inténtalo más tarde.';
+  }
+
+  /* ======== estilos ======== */
+  function inyectarEstilos() {
+    if (document.getElementById('advol-styles')) return;
+    var st = document.createElement('style');
+    st.id = 'advol-styles';
+    st.textContent =
+      '#advol-btn{position:fixed;right:16px;bottom:16px;z-index:1500;display:flex;align-items:center;gap:10px;width:auto;max-width:calc(100vw - 20px);margin:0;' +
+      'padding:10px 18px 10px 14px;border:none;border-radius:999px;cursor:pointer;' +
+      'background:linear-gradient(135deg,#7c3aed 0%,#6366f1 60%,#8b5cf6 100%);color:#fff;' +
+      'font-family:Montserrat,sans-serif;text-align:left;box-shadow:0 6px 18px rgba(124,58,237,.42);' +
+      'transition:transform .2s ease,box-shadow .2s ease;overflow:hidden;animation:advolPulse 2.6s ease-in-out infinite;}' +
+      '#advol-btn:hover{transform:translateY(-2px);box-shadow:0 10px 24px rgba(124,58,237,.55);}' +
+      '#advol-btn .advol-ico{flex:0 0 auto;width:34px;height:34px;border-radius:50%;background:rgba(255,255,255,.2);' +
+      'display:flex;align-items:center;justify-content:center;font-size:14px;position:relative;z-index:1;}' +
+      '#advol-btn .advol-t1{display:block;font-size:0.82rem;font-weight:700;line-height:1.15;position:relative;z-index:1;}' +
+      '#advol-btn .advol-t2{display:block;font-size:0.66rem;font-weight:500;opacity:.92;line-height:1.25;position:relative;z-index:1;}' +
+      '#advol-btn::after{content:"";position:absolute;top:0;left:-60%;width:45%;height:100%;' +
+      'background:linear-gradient(100deg,transparent,rgba(255,255,255,.35),transparent);transform:skewX(-20deg);' +
+      'animation:advolShine 3.4s ease-in-out infinite;}' +
+      '#advol-btn.advol-oculto{display:none !important;}' +
+      '@keyframes advolShine{0%,55%{left:-60%}85%,100%{left:130%}}' +
+      '@keyframes advolPulse{0%,100%{box-shadow:0 6px 18px rgba(124,58,237,.42)}50%{box-shadow:0 6px 26px rgba(124,58,237,.72)}}' +
+      '@media(max-width:600px){#advol-btn{right:10px;bottom:10px;padding:8px 14px 8px 10px;}' +
+      '#advol-btn .advol-t1{font-size:0.74rem;}#advol-btn .advol-t2{font-size:0.6rem;}' +
+      '#advol-btn .advol-ico{width:30px;height:30px;font-size:12px;}}' +
+      '#advol-overlay{position:fixed;inset:0;z-index:4000;display:none;align-items:center;justify-content:center;' +
+      'background:rgba(15,23,42,.86);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);' +
+      'padding:16px;box-sizing:border-box;}' +
+      '#advol-overlay.advol-abierto{display:flex;}' +
+      '#advol-overlay.advol-shake #advol-box{animation:advolShake .4s ease;}' +
+      '@keyframes advolShake{0%,100%{transform:translateX(0)}25%{transform:translateX(-7px)}75%{transform:translateX(7px)}}' +
+      '#advol-box{width:min(94vw,640px);max-height:92vh;background:#fff;border-radius:18px;overflow:hidden;' +
+      'box-shadow:0 24px 60px rgba(0,0,0,.45);display:flex;flex-direction:column;font-family:Montserrat,sans-serif;}' +
+      '#advol-top{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 14px;' +
+      'background:linear-gradient(135deg,#7c3aed,#6366f1);color:#fff;flex:0 0 auto;}' +
+      '#advol-top .advol-marca{font-size:0.72rem;font-weight:700;letter-spacing:1.5px;}' +
+      '#advol-top .advol-sub{font-size:0.62rem;opacity:.85;}' +
+      '#advol-media{position:relative;flex:1 1 auto;background:#0b1220;display:flex;align-items:center;' +
+      'justify-content:center;min-height:180px;overflow:hidden;}' +
+      '#advol-media img,#advol-media video{display:block;max-width:100%;max-height:56vh;width:auto;object-fit:contain;}' +
+      '#advol-pub{position:absolute;top:8px;left:8px;font-size:9px;letter-spacing:1px;color:#fff;' +
+      'background:rgba(0,0,0,.55);padding:2px 7px;border-radius:3px;font-weight:700;z-index:3;pointer-events:none;}' +
+      '#advol-ring text{fill:#fff;font-size:12px;font-weight:700;font-family:Montserrat,sans-serif;}' +
+      '#advol-bar{position:absolute;left:0;bottom:0;height:4px;width:0%;' +
+      'background:linear-gradient(90deg,#a78bfa,#6366f1);z-index:3;transition:width .25s linear;}' +
+      '#advol-son{position:absolute;bottom:12px;right:12px;z-index:3;border:none;border-radius:50%;width:34px;height:34px;' +
+      'cursor:pointer;background:rgba(0,0,0,.55);color:#fff;font-size:14px;display:block;}' +
+      '#advol-foot{padding:12px 16px;display:flex;align-items:center;justify-content:space-between;gap:10px;' +
+      'background:#fff;flex:0 0 auto;min-height:52px;box-sizing:border-box;}' +
+      '#advol-msg{font-size:0.75rem;color:#64748b;line-height:1.35;}' +
+      '#advol-visit,#advol-cerrar{border:none;border-radius:999px;padding:8px 16px;cursor:pointer;' +
+      'font-weight:700;font-size:0.75rem;font-family:Montserrat,sans-serif;display:none;flex:0 0 auto;width:auto;max-width:none;}' +
+      '#advol-visit{background:#eef2ff;color:#4f46e5;}' +
+      '#advol-visit:hover{background:#e0e7ff;}' +
+      '#advol-cerrar{background:#7c3aed;color:#fff;}' +
+      '#advol-cerrar:hover{background:#6d28d9;}' +
+      '#advol-estado,#advol-final{flex:1 1 auto;display:none;flex-direction:column;align-items:center;' +
+      'justify-content:center;gap:12px;background:#fff;padding:30px 24px;text-align:center;}' +
+      '#advol-estado .advol-emj{font-size:2rem;}' +
+      '#advol-estado .advol-et{font-size:0.85rem;color:#334155;line-height:1.5;max-width:440px;}' +
+      '#advol-final .advol-check{width:64px;height:64px;border-radius:50%;background:#dcfce7;color:#16a34a;' +
+      'display:flex;align-items:center;justify-content:center;font-size:30px;animation:advolPop .45s ease;}' +
+      '@keyframes advolPop{0%{transform:scale(.4);opacity:0}70%{transform:scale(1.12)}100%{transform:scale(1);opacity:1}}' +
+      '#advol-final .advol-ft1{font-size:1.05rem;font-weight:700;color:#14532d;}' +
+      '#advol-final .advol-ft2{font-size:0.78rem;color:#64748b;max-width:420px;line-height:1.45;}';
+    document.head.appendChild(st);
+  }
+
+  /* ======== overlay / modal ======== */
+  var overlay = null, media = null, msg = null, visitBtn = null, cerrarBtn = null,
+      sonBtn = null, finalEl = null, estadoEl = null, etEl = null,
+      ringWrap = null, ringProgress = null, ringText = null, bar = null;
+  var videoActual = null;
+  var estado = 'cerrado'; // cerrado | cargando | reproduciendo | confirmando | final | aviso
+  var timerId = null, acumulado = 0, lastTs = 0, durMs = 0;
+  var anuncioActual = null;
+
+  function ringSVG() {
+    var C = 119.38; // 2 · π · 19
+    return '<svg id="advol-ring" width="46" height="46" viewBox="0 0 46 46">' +
+      '<circle cx="23" cy="23" r="19" fill="rgba(0,0,0,.35)" stroke="rgba(255,255,255,.3)" stroke-width="4"></circle>' +
+      '<circle id="advol-ring-p" cx="23" cy="23" r="19" fill="none" stroke="#ffffff" stroke-width="4" stroke-linecap="round"' +
+      ' stroke-dasharray="' + C + '" stroke-dashoffset="0" transform="rotate(-90 23 23)"></circle>' +
+      '<text id="advol-ring-t" x="23" y="27.5" text-anchor="middle"></text></svg>';
+  }
+
+  function crearOverlay() {
+    if (overlay) return;
+    overlay = document.createElement('div');
+    overlay.id = 'advol-overlay';
+    overlay.innerHTML =
+      '<div id="advol-box">' +
+        '<div id="advol-top">' +
+          '<div><div class="advol-marca">AD COMMUNITY</div>' +
+          '<div class="advol-sub">Anuncio voluntario · Apoya la plataforma</div></div>' +
+          '<div id="advol-ringwrap" style="display:none;">' + ringSVG() + '</div>' +
+        '</div>' +
+        '<div id="advol-media"></div>' +
+        '<div id="advol-estado"><div class="advol-emj">⏳</div><div class="advol-et" id="advol-et"></div></div>' +
+        '<div id="advol-final"><div class="advol-check">✓</div>' +
+          '<div class="advol-ft1">¡Gracias por apoyar la plataforma!</div>' +
+          '<div class="advol-ft2">Tu visualización ayuda a sufragar el mantenimiento técnico de la comunidad.</div></div>' +
+        '<div id="advol-foot">' +
+          '<div id="advol-msg"></div>' +
+          '<button type="button" id="advol-visit">Visitar al anunciante ↗</button>' +
+          '<button type="button" id="advol-cerrar">Cerrar</button>' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(overlay);
+    media = document.getElementById('advol-media');
+    msg = document.getElementById('advol-msg');
+    visitBtn = document.getElementById('advol-visit');
+    cerrarBtn = document.getElementById('advol-cerrar');
+    finalEl = document.getElementById('advol-final');
+    estadoEl = document.getElementById('advol-estado');
+    etEl = document.getElementById('advol-et');
+    ringWrap = document.getElementById('advol-ringwrap');
+
+    overlay.addEventListener('click', function (ev) {
+      if (ev.target !== overlay) return;
+      if (estado === 'reproduciendo' || estado === 'confirmando' || estado === 'cargando') shake();
+      else cerrarModal();
+    });
+    cerrarBtn.addEventListener('click', cerrarModal);
+    visitBtn.addEventListener('click', function () { if (anuncioActual) visitar(anuncioActual); });
+  }
+
+  function setMsg(t) { if (msg) msg.innerHTML = t; }
+  function shake() {
+    overlay.classList.remove('advol-shake');
+    void overlay.offsetWidth;
+    overlay.classList.add('advol-shake');
+  }
+
+  /* ======== flujo principal: 1 petición = 1 anuncio ======== */
+  function abrirModal() {
+    if (estado !== 'cerrado') return;
+    if (esStaff()) return;
+    crearOverlay();
+    estado = 'cargando';
+    document.body.style.overflow = 'hidden';
+    overlay.classList.add('advol-abierto');
+    ocultarBoton(true);
+    media.style.display = 'none';
+    media.innerHTML = '';
+    finalEl.style.display = 'none';
+    estadoEl.style.display = 'flex';
+    estadoEl.querySelector('.advol-emj').textContent = '⏳';
+    etEl.innerHTML = 'Solicitando anuncio…';
+    ringWrap.style.display = 'none';
+    visitBtn.style.display = 'none';
+    cerrarBtn.style.display = 'none';
+    sonBtn = null;
+    setMsg('Solicitando anuncio…');
+
+    rpc('ad_get_next_ad', { p_app_id: APP_ID, p_channel: CHANNEL, p_fingerprint: getFingerprint() })
+      .then(function (data) {
+        if (estado !== 'cargando') return;
+        if (!data || !data.ok) {
+          log('sin anuncio:', data && data.reason);
+          estado = 'aviso';
+          estadoEl.querySelector('.advol-emj').textContent = '🙏';
+          etEl.innerHTML = motivoTxt(data && data.reason);
+          setMsg('');
+          cerrarBtn.style.display = 'inline-block';
+          return;
+        }
+        anuncioActual = data;
+        reproducir(data);
+      })
+      .catch(function (err) {
+        log('error get_next_ad:', err);
+        if (estado !== 'cargando') return;
+        estado = 'aviso';
+        etEl.innerHTML = 'No se ha podido cargar el anuncio.<br>Comprueba tu conexión e inténtalo de nuevo.';
+        setMsg('');
+        cerrarBtn.style.display = 'inline-block';
+      });
+  }
+
+  function reproducir(data) {
+    estado = 'reproduciendo';
+    estadoEl.style.display = 'none';
+    finalEl.style.display = 'none';
+    media.style.display = 'flex';
+    media.innerHTML = '';
+    videoActual = null;
+
+    var formato = data.format || 'image';
+    if (formato.indexOf('video') === 0) {
+      var v = document.createElement('video');
+      v.src = data.file_url;
+      v.autoplay = true;
+      v.muted = true;
+      v.loop = true;
+      v.preload = 'auto';
+      v.setAttribute('playsinline', '');
+      v.setAttribute('webkit-playsinline', '');
+      v.setAttribute('muted', '');
+      media.appendChild(v);
+      videoActual = v;
+      var p = v.play(); if (p && p.catch) p.catch(function () {});
+      var sb = document.createElement('button');
+      sb.type = 'button';
+      sb.id = 'advol-son';
+      sb.textContent = '🔇';
+      sb.addEventListener('click', toggleSonido);
+      media.appendChild(sb);
+      sonBtn = sb;
+    } else {
+      var im = document.createElement('img');
+      im.src = data.file_url;
+      im.alt = 'Publicidad';
+      media.appendChild(im);
+      if (data.target_url) {
+        im.style.cursor = 'pointer';
+        im.addEventListener('click', function () { visitar(data); });
+      }
+      sonBtn = null;
+    }
+
+    var pub = document.createElement('div');
+    pub.id = 'advol-pub';
+    pub.textContent = 'PUBLICIDAD';
+    media.appendChild(pub);
+    bar = document.createElement('div');
+    bar.id = 'advol-bar';
+    media.appendChild(bar);
+    ringProgress = document.getElementById('advol-ring-p');
+    ringText = document.getElementById('advol-ring-t');
+    ringWrap.style.display = 'block';
+
+    setMsg('El anuncio se cerrará solo al terminar. Gracias por tu apoyo.');
+    visitBtn.style.display = data.target_url ? 'inline-block' : 'none';
+    cerrarBtn.style.display = 'none';
+
+    durMs = Math.max(1000, (data.duration_seconds || 5) * 1000);
+    acumulado = 0;
+    lastTs = Date.now();
+    pintarTiempo(durMs, 0);
+    if (videoActual) { var p2 = videoActual.play(); if (p2 && p2.catch) p2.catch(function () {}); }
+    timerId = setInterval(tick, 200);
+  }
+
+  function tick() {
+    if (estado !== 'reproduciendo') return;
+    var now = Date.now();
+    if (document.visibilityState === 'visible') acumulado += (now - lastTs);
+    lastTs = now;
+    if (acumulado >= durMs) { terminarReproduccion(); return; }
+    pintarTiempo(durMs, acumulado);
+  }
+
+  function pintarTiempo(total, acum) {
+    var rest = Math.max(0, total - acum);
+    if (ringText) ringText.textContent = String(Math.ceil(rest / 1000));
+    if (ringProgress) {
+      var C = 119.38;
+      var prog = total > 0 ? Math.min(1, acum / total) : 0;
+      ringProgress.setAttribute('stroke-dashoffset', String(C * prog));
+    }
+    if (bar) bar.style.width = (total > 0 ? Math.min(100, (acum / total) * 100) : 0) + '%';
+  }
+
+  function terminarReproduccion() {
+    if (estado !== 'reproduciendo') return;
+    estado = 'confirmando';
+    if (timerId) { clearInterval(timerId); timerId = null; }
+    pintarTiempo(durMs, durMs);
+    if (videoActual) { try { videoActual.pause(); } catch (e) {} }
+    setMsg('Confirmando tu visualización…');
+    visitBtn.style.display = 'none';
+    rpc('ad_confirm_view', { p_view_token: anuncioActual.view_token })
+      .then(function (res) {
+        if (res && res.ok) log('facturado OK:', res.credits_charged, 'créditos · mov', res.numero_movimiento);
+        else log('facturación rechazada:', res && res.reason);
+        mostrarFinal();
+      })
+      .catch(function (err) {
+        log('error confirm_view:', err);
+        mostrarFinal();
+      });
+  }
+
+  function mostrarFinal() {
+    estado = 'final';
+    media.style.display = 'none';
+    ringWrap.style.display = 'none';
+    finalEl.style.display = 'flex';
+    setMsg('');
+    visitBtn.style.display = 'none';
+    cerrarBtn.style.display = 'none';
+    setTimeout(function () { if (estado === 'final') cerrarModal(); }, 1800);
+  }
+
+  function cerrarModal() {
+    if (estado === 'reproduciendo' || estado === 'confirmando' || estado === 'cargando') return;
+    if (timerId) { clearInterval(timerId); timerId = null; }
+    if (videoActual) { try { videoActual.pause(); } catch (e) {} videoActual = null; }
+    if (overlay) {
+      overlay.classList.remove('advol-abierto');
+      media.innerHTML = '';
+    }
+    bar = null; ringProgress = null; ringText = null; sonBtn = null; anuncioActual = null;
+    document.body.style.overflow = '';
+    estado = 'cerrado';
+    refrescarDisponibilidad(); /* al cerrar se comprueba si sigue habiendo anuncios */
+  }
+
+  /* ======== clic al anunciante (facturación idéntica al rodillo) ======== */
+  function visitar(data) {
+    if (!data || !data.target_url) return;
+    try {
+      fetch(SUPABASE_URL + '/rest/v1/rpc/ad_register_click', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'apikey': SUPABASE_ANON_KEY,
+          'Authorization': 'Bearer ' + SUPABASE_ANON_KEY
+        },
+        body: JSON.stringify({
+          p_ad_id: data.ad_id, p_app_id: APP_ID,
+          p_channel: CHANNEL, p_fingerprint: getFingerprint()
+        }),
+        keepalive: true
+      }).catch(function () {});
+    } catch (e) {}
+    try { window.open(data.target_url, '_blank', 'noopener,noreferrer'); } catch (e) {}
+  }
+
+  function toggleSonido() {
+    if (!videoActual) return;
+    videoActual.muted = !videoActual.muted;
+    sonBtn.textContent = videoActual.muted ? '🔇' : '🔊';
+  }
+
+  /* ======== botón flotante ======== */
+  function crearBoton() {
+    if (document.getElementById('advol-btn')) return;
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.id = 'advol-btn';
+    b.title = 'Mira un anuncio voluntario y ayuda a mantener la plataforma. Solo tarda unos segundos.';
+    b.setAttribute('aria-label', 'Ver un anuncio voluntario y apoyar la plataforma');
+    b.innerHTML =
+      '<span class="advol-ico">▶</span>' +
+      '<span><span class="advol-t1">🤝 Apoya la plataforma</span>' +
+      '<span class="advol-t2">Ver un anuncio voluntario</span></span>';
+    b.addEventListener('click', abrirModal);
+    b.classList.add('advol-oculto'); /* nace oculto: el sondeo decide si se muestra */
+    document.body.appendChild(b);
+  }
+  function ocultarBoton(s) {
+    var b = document.getElementById('advol-btn');
+    if (b) b.classList.toggle('advol-oculto', !!s);
+  }
+
+  /* ======== bloqueo de salida durante la reproducción ======== */
+  document.addEventListener('keydown', function (e) {
+    if (estado === 'reproduciendo' || estado === 'confirmando' || estado === 'cargando') {
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); shake(); }
+    }
+  }, true);
+
+  document.addEventListener('visibilitychange', function () {
+    if (!videoActual) return;
+    if (document.visibilityState !== 'visible') {
+      try { videoActual.pause(); } catch (e) {}
+    } else if (estado === 'reproduciendo') {
+      var p = videoActual.play(); if (p && p.catch) p.catch(function () {});
+    }
+  });
+
+  /* ======== sondeo de disponibilidad (mismo criterio que el rodillo) ========
+     El botón solo se muestra si ad_get_next_ad devuelve un anuncio. Si el canal
+     está inactivo, la cuota horaria está agotada, el presupuesto del día se ha
+     terminado o no hay anuncios, el botón desaparece y se vuelve a sondear más
+     tarde (30 s tras un resultado negativo, 90 s tras uno positivo). */
+  var comprobando = false;
+  var probeTimer = null;
+  function programarProbe(ms) {
+    if (probeTimer) clearTimeout(probeTimer);
+    probeTimer = setTimeout(refrescarDisponibilidad, ms);
+  }
+  function refrescarDisponibilidad() {
+    if (comprobando) return;
+    if (esStaff()) {
+      if (probeTimer) { clearTimeout(probeTimer); probeTimer = null; }
+      ocultarBoton(true);
+      return;
+    }
+    if (estado !== 'cerrado') { programarProbe(15000); return; } /* modal abierto: se decide al cerrarlo */
+    comprobando = true;
+    setTimeout(function () { comprobando = false; }, 20000); /* válvula anti-cuelgue */
+    rpc('ad_get_next_ad', { p_app_id: APP_ID, p_channel: CHANNEL, p_fingerprint: getFingerprint() })
+      .then(function (data) {
+        comprobando = false;
+        if (!data || !data.ok) {
+          log('botón oculto:', data && data.reason);
+          ocultarBoton(true);
+          programarProbe(30000);
+          return;
+        }
+        log('hay anuncio voluntario disponible → botón visible');
+        ocultarBoton(false);
+        programarProbe(90000);
+      })
+      .catch(function (err) {
+        comprobando = false;
+        log('error sondeo:', err);
+        ocultarBoton(true);
+        programarProbe(30000);
+      });
+  }
+
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'visible' && !esStaff()) programarProbe(2000);
+  });
+
+  window.addEventListener('storage', function (e) {
+    if (!e.key) return;
+    if (e.key === 'ad_staff_mode_cartilla' || e.key === 'ad_force_show_staff') {
+      if (esStaff()) { ocultarBoton(true); }
+      else {
+        if (!document.getElementById('advol-btn')) { inyectarEstilos(); crearBoton(); }
+        refrescarDisponibilidad();
+      }
+    }
+  });
+
+  /* ======== init ======== */
+  function init() {
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', init);
+      return;
+    }
+    inyectarEstilos();
+    if (!esStaff()) {
+      crearBoton();               /* nace oculto */
+      refrescarDisponibilidad();  /* solo se hace visible si hay anuncio disponible */
+    } else {
+      log('staff detectado → voluntaria deshabilitada');
+    }
+    window.ADVoluntaria = {
+      open: abrirModal,
+      refresh: refrescarDisponibilidad,
+      debug: function (v) { DEBUG = !!v; }
+    };
+  }
+
+  init();
+})();
+</script>
+<!-- ===== AD COMMUNITY · VOLUNTARIA · FIN ===== -->
 </body>
 </html>
